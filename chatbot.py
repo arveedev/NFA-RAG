@@ -54,38 +54,59 @@ if "messages" not in st.session_state:
 
 # --- 5. THE SEARCH ENGINE (HYBRID + QUERY EXPANSION) ---
 def get_expert_context(user_query):
-    """Refined search that identifies technical terms before querying the DB."""
+    """Refined search with error handling and fallback."""
+    expanded_terms = [user_query]
     
-    # STEP 1: Expert Term Expansion
-    # We ask Gemini to give us technical keywords for better DB retrieval
-    expansion_prompt = f"The user asked: '{user_query}'. Identify 3 technical NFA keywords or SOP codes related to this. Output only the keywords, comma separated."
-    keywords_resp = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=expansion_prompt)
-    expanded_terms = [user_query] + keywords_resp.text.strip().split(',')
+    # STEP 1: Expert Term Expansion (with Safety Catch)
+    try:
+        expansion_prompt = f"The user asked: '{user_query}'. Identify 3 technical NFA keywords or SOP codes related to this. Output only the keywords, comma separated."
+        # Using a slightly more stable model name for some regions
+        keywords_resp = gemini_client.models.generate_content(
+            model='gemini-2.0-flash', # Updated to the most stable production name
+            contents=expansion_prompt
+        )
+        if keywords_resp and keywords_resp.text:
+            new_terms = keywords_resp.text.strip().split(',')
+            expanded_terms.extend([t.strip() for t in new_terms])
+    except Exception as expansion_error:
+        # If Gemini fails (quota or key issue), we just log it and move on with the user's query
+        print(f"Expansion failed: {expansion_error}")
+        # We don't crash the app, we just stick with the original query
 
     db_results = []
     seen_links = set()
 
-    # STEP 2: Hybrid Search (Codes + Vectors)
+    # STEP 2: Hybrid Search
     for term in expanded_terms:
-        # A. Regex for specific codes (TS-SQ04, etc)
+        # A. Regex for specific codes
         codes = re.findall(r'\b[A-Z]{2,4}-[A-Z0-9]{2,5}\b', term.upper())
         for code in codes:
-            kw_res = supabase.table("sops").select("*").ilike("sop_number", f"%{code}%").execute()
-            if kw_res.data:
-                for row in kw_res.data:
-                    if row['source_link'] not in seen_links:
-                        db_results.append(row)
-                        seen_links.add(row['source_link'])
+            try:
+                kw_res = supabase.table("sops").select("*").ilike("sop_number", f"%{code}%").execute()
+                if kw_res.data:
+                    for row in kw_res.data:
+                        if row['source_link'] not in seen_links:
+                            db_results.append(row)
+                            seen_links.add(row['source_link'])
+            except:
+                continue
 
-        # B. Vector Search for concepts
+        # B. Vector Search
         if len(db_results) < 8:
-            embed = gemini_client.models.embed_content(model="models/gemini-embedding-2", contents=term)
-            vec_res = supabase.rpc('match_sops', {'query_embedding': embed.embeddings[0].values, 'match_threshold': 0.25, 'match_count': 3}).execute()
-            if vec_res.data:
-                for row in vec_res.data:
-                    if row['source_link'] not in seen_links:
-                        db_results.append(row)
-                        seen_links.add(row['source_link'])
+            try:
+                embed = gemini_client.models.embed_content(model="models/text-embedding-004", contents=term)
+                vec_res = supabase.rpc('match_sops', {
+                    'query_embedding': embed.embeddings[0].values, 
+                    'match_threshold': 0.25, 
+                    'match_count': 3
+                }).execute()
+                if vec_res.data:
+                    for row in vec_res.data:
+                        if row['source_link'] not in seen_links:
+                            db_results.append(row)
+                            seen_links.add(row['source_link'])
+            except:
+                continue
     
     return db_results[:8]
 
