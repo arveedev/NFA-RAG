@@ -11,44 +11,34 @@ load_dotenv()
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# Custom Bot Avatar (Animated GIF for personality)
-BOT_AVATAR = "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJueGZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3/3o7TKSjP8M6E6v9m9u/giphy.gif"
-
 # --- 2. THE AI PERSONA (SYSTEM PROMPT) ---
 SYSTEM_INSTRUCTION = """You are the ultimate Agency Standard Operating Procedure (SOP) Expert AI.
-Your personality is highly professional, exceptionally accurate, but with a witty, dry sense of humor.
+Your personality is highly professional, exceptionally accurate, but with a witty, dry sense of humor—like a brilliant, seasoned senior government employee who knows the entire regulatory rulebook by heart and secretly enjoys showing it off.
 
 CRITICAL RULES:
-1. NO HALLUCINATIONS: You must ONLY answer based on the 'CONTEXT FROM DATABASE' provided. If a specific SOP is missing, state exactly what you see and ask for more keywords.
-2. MANDATORY CITATIONS: Every time you provide information, you MUST explicitly state the SOP NUMBER and provide the clickable [Source Link].
-3. EXHIBITS AND FORMS: Emphasize specific forms or document layouts mentioned in the context.
-4. BE CONCISE AND DIRECT: Give the answer immediately, then add your witty nuance."""
+1. NO HALLUCINATIONS: You must ONLY answer based on the 'CONTEXT FROM DATABASE' provided. If a specific SOP is missing from the context block, tell the user exactly what you see in your context and politely ask them to provide more keywords.
+2. MANDATORY CITATIONS: Every time you provide information, you MUST explicitly state the SOP NUMBER and provide the exact clickable [Source Link] provided in the context.
+3. EXHIBITS AND FORMS: If the context includes details about exhibits, specific forms, or preferred document layouts, emphasize them so the user doesn't submit incorrect paperwork.
+4. BE CONCISE AND DIRECT: Do not use unnecessary bureaucratic fluff. Give the answer immediately, then add your witty nuance."""
 
 # --- 3. UTILITY FUNCTIONS ---
 def fix_domino_url(url):
-    """Patches missing Lotus Domino paths."""
-    if not url: return url
+    """Patches missing Lotus Domino paths that cause 404 Design Note errors."""
+    if not url:
+        return url
+    # If the scraped link points directly to the root domain instead of the webapp subdirectory
     if "nfaweb.nfa.gov.ph" in url and "/webapp/msd/sopweb.nsf/" not in url:
         url = url.replace("https://nfaweb.nfa.gov.ph/", "https://nfaweb.nfa.gov.ph/webapp/msd/sopweb.nsf/")
+        # Remove any accidental double slashes created by the replacement
         url = re.sub(r'(?<!:)/{2,}', '/', url)
     return url
 
 # --- 4. STREAMLIT UI CONFIGURATION ---
-st.set_page_config(page_title="NFA SOP Expert", page_icon="🤖", layout="centered")
-
-st.markdown("""
-    <style>
-    .stChatMessage a {
-        color: #1f77b4 !important;
-        text-decoration: underline !important;
-        font-weight: bold;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
+st.set_page_config(page_title="SOP Expert AI", page_icon="🤖", layout="centered")
 st.title("🤖 NFA SOP Expert AI")
-st.caption("Restored Hybrid Search (V2.5 - Fixed Resource Routing)")
+st.caption("Now equipped with Hybrid Search (Vector + Code Matching) and Real-Time Streaming.")
 
+# Initialize Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.messages.append({
@@ -58,58 +48,58 @@ if "messages" not in st.session_state:
 
 # Render conversation history
 for msg in st.session_state.messages:
-    avatar = BOT_AVATAR if msg["role"] == "model" else None
-    with st.chat_message(msg["role"], avatar=avatar):
+    with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 # --- 5. CORE CHATBOT ENGINE ---
 if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes like TS-SQ04..."):
     
     # Show User Input
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user"):
         st.markdown(user_prompt)
+    st.session_state.messages.append({"role": "user", "content": user_prompt})
     
     # Process AI Response
-    with st.chat_message("model", avatar=BOT_AVATAR):
-        status_placeholder = st.empty()
-        status_placeholder.text("🔍 Scanning database...")
+    with st.chat_message("model"):
+        status_text = st.empty()
+        status_text.text("🔍 Scanning database via Hybrid Search...")
         
         try:
             db_results = []
             seen_links = set()
             
             # PHASE A: Exact Keyword/Code Matching
+            # Scans for patterns like TS-SQ04, TS-ES26, etc.
             detected_codes = re.findall(r'\b[A-Z]{2,4}-[A-Z0-9]{2,5}\b', user_prompt.upper())
             for code in detected_codes:
-                kw_res = supabase.table("sops").select("*").ilike("sop_number", f"%{code}%").execute()
-                if kw_res.data:
-                    for row in kw_res.data:
+                keyword_response = supabase.table("sops").select("*").ilike("sop_number", f"%{code}%").execute()
+                if keyword_response.data:
+                    for row in keyword_response.data:
                         if row['source_link'] not in seen_links:
                             db_results.append(row)
                             seen_links.add(row['source_link'])
 
             # PHASE B: Vector Semantic Search
+            # Only run if we haven't maxed out our context limit with exact matches
             if len(db_results) < 5:
-                # FIX 1: Removed 'models/' prefix
-                embed_resp = gemini_client.models.embed_content(
-                    model="text-embedding-004",
+                embed_response = gemini_client.models.embed_content(
+                    model="models/gemini-embedding-2",
                     contents=user_prompt
                 )
-                query_vector = embed_resp.embeddings[0].values
+                query_vector = embed_response.embeddings[0].values
                 
-                vec_res = supabase.rpc(
+                vector_response = supabase.rpc(
                     'match_sops', 
-                    {'query_embedding': query_vector, 'match_threshold': 0.15, 'match_count': 5}
+                    {'query_embedding': query_vector, 'match_threshold': 0.3, 'match_count': 5}
                 ).execute()
                 
-                if vec_res.data:
-                    for row in vec_res.data:
+                if vector_response.data:
+                    for row in vector_response.data:
                         if row['source_link'] not in seen_links and len(db_results) < 6:
                             db_results.append(row)
                             seen_links.add(row['source_link'])
 
-            # Build Context Block
+            # Build and Sanitize Context Block
             context_text = ""
             if db_results:
                 for doc in db_results:
@@ -119,9 +109,9 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
                     context_text += f"LINK: {sanitized_url}\n"
                     context_text += f"CONTENT:\n{doc['content']}\n"
             else:
-                context_text = "No relevant SOPs found in the database for this query."
+                context_text = "No relevant SOPs or documents found matching this query in the database."
 
-            # Construct History for the model
+            # Construct Streaming Payload
             chat_contents = []
             for m in st.session_state.messages[:-1]:
                 role = "user" if m["role"] == "user" else "model"
@@ -130,21 +120,28 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             augmented_prompt = f"CONTEXT FROM DATABASE:\n{context_text}\n\nUSER QUESTION:\n{user_prompt}"
             chat_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=augmented_prompt)]))
             
-            status_placeholder.empty()
+            status_text.empty() # Remove loading text right before streaming starts
             
-            # FIX 2: Switched to universal 'gemini-1.5-flash'
+            # Call Streaming API
             response_stream = gemini_client.models.generate_content_stream(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=chat_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.1
+                    temperature=0.15
                 )
             )
             
-            full_response = st.write_stream(chunk.text for chunk in response_stream if chunk.text)
+            # Helper generator to pipe stream directly into Streamlit UI component
+            def chunk_generator():
+                for chunk in response_stream:
+                    if chunk.text:
+                        yield chunk.text
+
+            # Stream chunks smoothly onto the page
+            full_response = st.write_stream(chunk_generator())
             st.session_state.messages.append({"role": "model", "content": full_response})
             
         except Exception as e:
-            status_placeholder.empty()
+            status_text.empty()
             st.error(f"System Error: {e}")
