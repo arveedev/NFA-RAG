@@ -33,7 +33,7 @@ def fix_domino_url(url):
     return url
 
 # --- 4. STREAMLIT UI CONFIGURATION ---
-st.set_page_config(page_title="NFA SOP Expert", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="NFA Albay SOP Expert", page_icon="🤖", layout="centered")
 
 st.markdown("""
     <style>
@@ -45,8 +45,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 NFA SOP Expert AI")
-st.caption("Advanced Retrieval-Augmented Expert System (V2.1 - Quota Safe)")
+st.title("🤖 NFA Albay - SOP Expert AI")
+st.caption("Advanced Retrieval-Augmented Expert System (V2.2 - High Quota)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -55,11 +55,11 @@ if "messages" not in st.session_state:
 def get_expert_context(user_query):
     expanded_terms = [user_query]
     
-    # 1. Expert Expansion (Wrapped in try/except to bypass 429 quota errors silently)
+    # 1. Expert Expansion - Using the 8B model (Fastest, highest rate limits)
     try:
         expansion_prompt = f"The user asked: '{user_query}'. Identify 2-3 technical NFA keywords (e.g., 'Grains', 'Warehouse', 'Quality Control') related to this. Output keywords only, comma separated."
         keywords_resp = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash-8b', 
             contents=expansion_prompt
         )
         if keywords_resp.text:
@@ -139,8 +139,9 @@ if prompt := st.chat_input("Ask me anything"):
         chat_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=f"CONTEXT:\n{context_text}\n\nQUESTION: {prompt}")]))
 
         try:
+            # Using the exact 002 version string prevents the 404 SDK routing error
             response_stream = gemini_client.models.generate_content_stream(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash-002',
                 contents=chat_contents,
                 config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.1)
             )
@@ -152,6 +153,5 @@ if prompt := st.chat_input("Ask me anything"):
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                 warning_msg = "⚠️ *I'm analyzing documents too quickly and hit my free-tier limit. Please wait about 15 seconds and try asking again!*"
                 st.warning(warning_msg)
-                # We don't save this warning to history so it doesn't clutter the context
             else:
                 st.error(f"System Error: {e}")
