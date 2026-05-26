@@ -93,7 +93,7 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             if len(db_results) < 5:
                 # Use text-embedding-004 as it is the most stable for search
                 embed_resp = gemini_client.models.embed_content(
-                    model="models/gemini-embedding-2",
+                    model="models/text-embedding-004",
                     contents=user_prompt
                 )
                 query_vector = embed_resp.embeddings[0].values
