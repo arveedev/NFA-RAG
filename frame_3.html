@@ -1,0 +1,35 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"><html><head><script language="JavaScript" type="text/javascript">
+<!-- 
+document._domino_target = "_self";
+function _doClick(v, o, t, h) {
+  var form = document._user;
+  if (form.onsubmit) {
+     var retVal = form.onsubmit();
+     if (typeof retVal == "boolean" && retVal == false)
+       return false;
+  }
+  var target = document._domino_target;
+  if (o.href != null) {
+    if (o.target != null)
+       target = o.target;
+  } else {
+    if (t != null)
+      target = t;
+  }
+  form.target = target;
+  form.__Click.value = v;
+  if (h != null)
+    form.action += h;
+  form.submit();
+  return false;
+}
+// -->
+</script></head><body text="#000000" bgcolor="#5291EF" marginwidth="1" marginheight="0">
+
+<form method="post" action="/webapp/msd/sopweb.nsf/user?OpenForm&amp;Seq=1" name="_user">
+<input type="hidden" name="__Click" value="0"><div align="right">
+<table border="0" cellspacing="0" cellpadding="0">
+<tbody><tr valign="top"><td width="29" bgcolor="#800000"><img width="1" height="1" src="/icons/ecblank.gif" border="0" alt=""></td><td width="624" bgcolor="#800000"><font size="2" color="#ffffff" face="Calibri">May 25,  2026 / 12:19:51 AM</font></td><td width="384" bgcolor="#800000" colspan="2"><div align="center"><font size="2" color="#FFFFFF" face="Calibri">Related Database - </font><a href="/webapp/msd/sopweb.nsf/SOA?OpenPage" target="Content"><font size="2" color="#FFFFFF" face="Calibri">Specifications of Authority</font></a></div></td></tr>
+</tbody></table>
+</div></form>
+</body></html>
