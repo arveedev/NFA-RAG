@@ -77,68 +77,45 @@ def get_expert_context(user_query):
         # A. Regex for Codes (Priority)
         codes = re.findall(r'\b[A-Z]{2,4}-[A-Z0-9]{2,5}\b', term.upper())
         for code in codes:
-            kw_res = supabase.table("sops").select("*").ilike("sop_number", f"%{code}%").execute()
-            if kw_res.data:
-                for row in kw_res.data:
-                    if row['source_link'] not in seen_links:
-                        db_results.append(row)
-                        seen_links.add(row['source_link'])
+            try:
+                kw_res = supabase.table("sops").select("*").ilike("sop_number", f"%{code}%").execute()
+                if kw_res.data:
+                    for row in kw_res.data:
+                        if row['source_link'] not in seen_links:
+                            db_results.append(row)
+                            seen_links.add(row['source_link'])
+            except Exception:
+                continue
 
         # B. Relaxed Vector Search
         # Lowered match_threshold from 0.25 to 0.15 to capture more results
-        embed = gemini_client.models.embed_content(model="models/text-embedding-004", contents=term)
-        vec_res = supabase.rpc('match_sops', {
-            'query_embedding': embed.embeddings[0].values, 
-            'match_threshold': 0.15, 
-            'match_count': 5
-        }).execute()
-        
-        if vec_res.data:
-            for row in vec_res.data:
-                if row['source_link'] not in seen_links:
-                    db_results.append(row)
-                    seen_links.add(row['source_link'])
+        try:
+            embed = gemini_client.models.embed_content(model="models/text-embedding-004", contents=term)
+            vec_res = supabase.rpc('match_sops', {
+                'query_embedding': embed.embeddings[0].values, 
+                'match_threshold': 0.15, 
+                'match_count': 5
+            }).execute()
+            
+            if vec_res.data:
+                for row in vec_res.data:
+                    if row['source_link'] not in seen_links:
+                        db_results.append(row)
+                        seen_links.add(row['source_link'])
+        except Exception:
+            continue
     
     return db_results[:10]
 
-# --- FINAL CHAT LOGIC ---
-if prompt := st.chat_input("How do I determine the quality of stocks?"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant", avatar=BOT_AVATAR):
-        results = get_expert_context(prompt)
-        
-        # If the DB returns NOTHING, we give the AI a "general" persona to explain why
-        if not results:
-            full_response = "I searched the NFA archives but couldn't find a specific SOP matching those terms. Could you try using a specific SOP number (like 'TS-SQ04') or different keywords like 'Laboratory Analysis' or 'Moisture Content'?"
-            st.markdown(full_response)
-        else:
-            context_text = ""
-            for doc in results:
-                s_url = fix_domino_url(doc['source_link'])
-                context_text += f"\nSOP: {doc['sop_number']} - {doc['title']}\nURL: {s_url}\nCONTENT: {doc['content']}\n"
-
-            # Stream the actual AI answer
-            response_stream = gemini_client.models.generate_content_stream(
-                model='gemini-1.5-flash',
-                contents=f"CONTEXT:\n{context_text}\n\nQUESTION: {prompt}",
-                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
-            )
-            full_response = st.write_stream(chunk.text for chunk in response_stream if chunk.text)
-        
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
-
 # --- 6. CHAT INTERFACE ---
-# Render History
+# Render History First
 for msg in st.session_state.messages:
     avatar = BOT_AVATAR if msg["role"] == "assistant" else None
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
-# User Input
-if prompt := st.chat_input("Ask about stock aging, procurement, or a specific SOP..."):
+# User Input - Consolidated logic with simplified placeholder
+if prompt := st.chat_input("Ask me anything"):
     # 1. Add User message to state and UI
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -168,14 +145,14 @@ if prompt := st.chat_input("Ask about stock aging, procurement, or a specific SO
         
         chat_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=f"CONTEXT:\n{context_text}\n\nQUESTION: {prompt}")]))
 
-        # Stream the response to UI (Fixes duplicate bug)
+        # Stream the response to UI 
         response_stream = gemini_client.models.generate_content_stream(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=chat_contents,
             config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.1)
         )
 
         full_response = st.write_stream(chunk.text for chunk in response_stream if chunk.text)
         
-        # Finally, save to history after the stream finishes
+        # Save to history after the stream finishes
         st.session_state.messages.append({"role": "assistant", "content": full_response})
