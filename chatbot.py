@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import streamlit as st
 from supabase import create_client
 from google import genai
@@ -11,7 +12,6 @@ load_dotenv()
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# Custom Bot Avatar (Animated GIF for personality)
 BOT_AVATAR = "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJueGZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3/3o7TKSjP8M6E6v9m9u/giphy.gif"
 
 # --- 2. THE AI PERSONA (SYSTEM PROMPT) ---
@@ -35,7 +35,6 @@ def fix_domino_url(url):
 # --- 4. STREAMLIT UI CONFIGURATION ---
 st.set_page_config(page_title="NFA SOP Expert", page_icon="🤖", layout="centered")
 
-# Mobile-friendly CSS for link visibility
 st.markdown("""
     <style>
     .stChatMessage a {
@@ -47,34 +46,34 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🤖 NFA SOP Expert AI")
-st.caption("Advanced Retrieval-Augmented Expert System (V2.0)")
+st.caption("Advanced Retrieval-Augmented Expert System (V2.1 - Quota Safe)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- 5. THE SEARCH ENGINE (HYBRID + QUERY EXPANSION) ---
+# --- 5. THE SEARCH ENGINE ---
 def get_expert_context(user_query):
-    """Broadened search to ensure results are always found."""
     expanded_terms = [user_query]
     
-    # STEP 1: Expert Term Expansion (Optional Success)
+    # 1. Expert Expansion (Wrapped in try/except to bypass 429 quota errors silently)
     try:
         expansion_prompt = f"The user asked: '{user_query}'. Identify 2-3 technical NFA keywords (e.g., 'Grains', 'Warehouse', 'Quality Control') related to this. Output keywords only, comma separated."
         keywords_resp = gemini_client.models.generate_content(
-            model='gemini-1.5-flash', # Using 1.5-flash for higher stability/limits
+            model='gemini-2.5-flash',
             contents=expansion_prompt
         )
         if keywords_resp.text:
             new_terms = keywords_resp.text.strip().split(',')
             expanded_terms.extend([t.strip() for t in new_terms])
     except Exception:
-        pass # Silently fail and use the original query
+        pass # If we hit the rate limit here, just ignore it and search the user's exact words.
 
     db_results = []
     seen_links = set()
 
+    # 2. Database Hybrid Search
     for term in expanded_terms:
-        # A. Regex for Codes (Priority)
+        # Regex Codes
         codes = re.findall(r'\b[A-Z]{2,4}-[A-Z0-9]{2,5}\b', term.upper())
         for code in codes:
             try:
@@ -87,8 +86,7 @@ def get_expert_context(user_query):
             except Exception:
                 continue
 
-        # B. Relaxed Vector Search
-        # Lowered match_threshold from 0.25 to 0.15 to capture more results
+        # Vector Search
         try:
             embed = gemini_client.models.embed_content(model="models/text-embedding-004", contents=term)
             vec_res = supabase.rpc('match_sops', {
@@ -108,20 +106,16 @@ def get_expert_context(user_query):
     return db_results[:10]
 
 # --- 6. CHAT INTERFACE ---
-# Render History First
 for msg in st.session_state.messages:
     avatar = BOT_AVATAR if msg["role"] == "assistant" else None
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
-# User Input - Consolidated logic with simplified placeholder
 if prompt := st.chat_input("Ask me anything"):
-    # 1. Add User message to state and UI
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Process Expert Response
     with st.chat_message("assistant", avatar=BOT_AVATAR):
         with st.status("Consulting the archives...", expanded=False) as status:
             results = get_expert_context(prompt)
@@ -137,7 +131,6 @@ if prompt := st.chat_input("Ask me anything"):
                 context_text = "No direct SOP matches found."
                 status.update(label="No direct matches found.", state="error")
 
-        # Prepare payload for streaming
         chat_contents = []
         for m in st.session_state.messages[:-1]:
             role = "user" if m["role"] == "user" else "model"
@@ -145,14 +138,20 @@ if prompt := st.chat_input("Ask me anything"):
         
         chat_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=f"CONTEXT:\n{context_text}\n\nQUESTION: {prompt}")]))
 
-        # Stream the response to UI 
-        response_stream = gemini_client.models.generate_content_stream(
-            model='gemini-1.5-flash',
-            contents=chat_contents,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.1)
-        )
-
-        full_response = st.write_stream(chunk.text for chunk in response_stream if chunk.text)
-        
-        # Save to history after the stream finishes
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        try:
+            response_stream = gemini_client.models.generate_content_stream(
+                model='gemini-2.5-flash',
+                contents=chat_contents,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.1)
+            )
+            full_response = st.write_stream(chunk.text for chunk in response_stream if chunk.text)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                warning_msg = "⚠️ *I'm analyzing documents too quickly and hit my free-tier limit. Please wait about 15 seconds and try asking again!*"
+                st.warning(warning_msg)
+                # We don't save this warning to history so it doesn't clutter the context
+            else:
+                st.error(f"System Error: {e}")
