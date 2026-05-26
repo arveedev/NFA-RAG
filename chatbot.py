@@ -47,7 +47,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🤖 NFA SOP Expert AI")
-st.caption("Restored Hybrid Search (V2.3 - High Reliability)")
+st.caption("Restored Hybrid Search (V2.5 - Fixed Resource Routing)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -91,9 +91,9 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
 
             # PHASE B: Vector Semantic Search
             if len(db_results) < 5:
-                # Use text-embedding-004 as it is the most stable for search
+                # FIX 1: Removed 'models/' prefix
                 embed_resp = gemini_client.models.embed_content(
-                    model="models/text-embedding-004",
+                    model="text-embedding-004",
                     contents=user_prompt
                 )
                 query_vector = embed_resp.embeddings[0].values
@@ -132,9 +132,9 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             
             status_placeholder.empty()
             
-            # Call Streaming API with the high-quota model
+            # FIX 2: Switched to universal 'gemini-1.5-flash'
             response_stream = gemini_client.models.generate_content_stream(
-                model='gemini-1.5-flash-002',
+                model='gemini-1.5-flash',
                 contents=chat_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
