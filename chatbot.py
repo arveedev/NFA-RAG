@@ -11,9 +11,6 @@ load_dotenv()
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# Custom Bot Avatar (Animated GIF for personality)
-BOT_AVATAR = "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJueGZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3/3o7TKSjP8M6E6v9m9u/giphy.gif"
-
 # --- 2. THE AI PERSONA (SYSTEM PROMPT) ---
 SYSTEM_INSTRUCTION = """You are the ultimate Agency Standard Operating Procedure (SOP) Expert AI.
 Your personality is highly professional, exceptionally accurate, but with a witty, dry sense of humor—like a brilliant, seasoned senior government employee who knows the entire regulatory rulebook by heart and secretly enjoys showing it off.
@@ -38,20 +35,8 @@ def fix_domino_url(url):
 
 # --- 4. STREAMLIT UI CONFIGURATION ---
 st.set_page_config(page_title="SOP Expert AI", page_icon="🤖", layout="centered")
-
-# Mobile-friendly CSS for link visibility
-st.markdown("""
-    <style>
-    .stChatMessage a {
-        color: #1f77b4 !important;
-        text-decoration: underline !important;
-        font-weight: bold;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 st.title("🤖 NFA SOP Expert AI")
-st.caption("Now equipped with Hybrid Search and High-Quota AI Model.")
+st.caption("Stable Release: High-Quota Hybrid Search")
 
 # Initialize Chat History
 if "messages" not in st.session_state:
@@ -63,8 +48,7 @@ if "messages" not in st.session_state:
 
 # Render conversation history
 for msg in st.session_state.messages:
-    avatar = BOT_AVATAR if msg["role"] == "model" else None
-    with st.chat_message(msg["role"], avatar=avatar):
+    with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 # --- 5. CORE CHATBOT ENGINE ---
@@ -76,7 +60,7 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
     st.session_state.messages.append({"role": "user", "content": user_prompt})
     
     # Process AI Response
-    with st.chat_message("model", avatar=BOT_AVATAR):
+    with st.chat_message("model"):
         status_text = st.empty()
         status_text.text("🔍 Scanning database via Hybrid Search...")
         
@@ -96,9 +80,9 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
 
             # PHASE B: Vector Semantic Search
             if len(db_results) < 5:
-                # FIXED: Standardized embedding string for API compatibility
+                # We are using your EXACT original embedding model here to prevent 404s
                 embed_response = gemini_client.models.embed_content(
-                    model="text-embedding-004", 
+                    model="models/gemini-embedding-2",
                     contents=user_prompt
                 )
                 query_vector = embed_response.embeddings[0].values
@@ -135,10 +119,10 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             augmented_prompt = f"CONTEXT FROM DATABASE:\n{context_text}\n\nUSER QUESTION:\n{user_prompt}"
             chat_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=augmented_prompt)]))
             
-            status_text.empty() 
+            status_text.empty() # Remove loading text
             
             # Call Streaming API
-            # FIXED: Swapped to 1.5-flash for massive quota allowance
+            # THIS IS THE FIX: Using gemini-1.5-flash for the 1,500/day quota limit.
             response_stream = gemini_client.models.generate_content_stream(
                 model='gemini-1.5-flash',
                 contents=chat_contents,
@@ -162,6 +146,6 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             status_text.empty()
             error_str = str(e)
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                st.warning("⚠️ *I am analyzing documents too quickly and hit my per-minute limit. Please wait 15 seconds and try again!*")
+                st.warning("⚠️ *I am answering questions a bit too fast and hit a temporary speed limit. Please wait 10 seconds and try again.*")
             else:
                 st.error(f"System Error: {e}")
