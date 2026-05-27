@@ -11,34 +11,43 @@ load_dotenv()
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
+BOT_AVATAR = "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJueGZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3bmZ3/3o7TKSjP8M6E6v9m9u/giphy.gif"
+
 # --- 2. THE AI PERSONA (SYSTEM PROMPT) ---
 SYSTEM_INSTRUCTION = """You are the ultimate Agency Standard Operating Procedure (SOP) Expert AI.
-Your personality is highly professional, exceptionally accurate, but with a witty, dry sense of humor—like a brilliant, seasoned senior government employee who knows the entire regulatory rulebook by heart and secretly enjoys showing it off.
+Your personality is highly professional, exceptionally accurate, but with a witty, dry sense of humor.
 
 CRITICAL RULES:
 1. NO HALLUCINATIONS: You must ONLY answer based on the 'CONTEXT FROM DATABASE' provided. If a specific SOP is missing from the context block, tell the user exactly what you see in your context and politely ask them to provide more keywords.
 2. MANDATORY CITATIONS: Every time you provide information, you MUST explicitly state the SOP NUMBER and provide the exact clickable [Source Link] provided in the context.
-3. EXHIBITS AND FORMS: If the context includes details about exhibits, specific forms, or preferred document layouts, emphasize them so the user doesn't submit incorrect paperwork.
+3. EXHIBITS AND FORMS: Emphasize specific forms or document layouts mentioned in the context.
 4. BE CONCISE AND DIRECT: Do not use unnecessary bureaucratic fluff. Give the answer immediately, then add your witty nuance."""
 
 # --- 3. UTILITY FUNCTIONS ---
 def fix_domino_url(url):
     """Patches missing Lotus Domino paths that cause 404 Design Note errors."""
-    if not url:
-        return url
-    # If the scraped link points directly to the root domain instead of the webapp subdirectory
+    if not url: return url
     if "nfaweb.nfa.gov.ph" in url and "/webapp/msd/sopweb.nsf/" not in url:
         url = url.replace("https://nfaweb.nfa.gov.ph/", "https://nfaweb.nfa.gov.ph/webapp/msd/sopweb.nsf/")
-        # Remove any accidental double slashes created by the replacement
         url = re.sub(r'(?<!:)/{2,}', '/', url)
     return url
 
 # --- 4. STREAMLIT UI CONFIGURATION ---
-st.set_page_config(page_title="SOP Expert AI", page_icon="🤖", layout="centered")
-st.title("🤖 NFA SOP Expert AI")
-st.caption("Stable Release: High-Quota Hybrid Search")
+st.set_page_config(page_title="NFA SOP Expert AI", page_icon="🤖", layout="centered")
 
-# Initialize Chat History
+st.markdown("""
+    <style>
+    .stChatMessage a {
+        color: #1f77b4 !important;
+        text-decoration: underline !important;
+        font-weight: bold;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🤖 NFA SOP Expert AI")
+st.caption("Restored to Stable Core (V2.5-Flash + Embedding-2)")
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.messages.append({
@@ -46,23 +55,21 @@ if "messages" not in st.session_state:
         "content": "Hello! I am your resident SOP Expert. What procedure or obscure exhibit can I help you untangle today?"
     })
 
-# Render conversation history
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
+    avatar = BOT_AVATAR if msg["role"] == "model" else None
+    with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
 # --- 5. CORE CHATBOT ENGINE ---
 if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes like TS-SQ04..."):
     
-    # Show User Input
+    st.session_state.messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user"):
         st.markdown(user_prompt)
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
     
-    # Process AI Response
-    with st.chat_message("model"):
+    with st.chat_message("model", avatar=BOT_AVATAR):
         status_text = st.empty()
-        status_text.text("🔍 Scanning database via Hybrid Search...")
+        status_text.text("🔍 Scanning database...")
         
         try:
             db_results = []
@@ -80,7 +87,7 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
 
             # PHASE B: Vector Semantic Search
             if len(db_results) < 5:
-                # We are using your EXACT original embedding model here to prevent 404s
+                # WE KNOW THIS WORKS: Based on your diagnostic script
                 embed_response = gemini_client.models.embed_content(
                     model="models/gemini-embedding-2",
                     contents=user_prompt
@@ -119,12 +126,11 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             augmented_prompt = f"CONTEXT FROM DATABASE:\n{context_text}\n\nUSER QUESTION:\n{user_prompt}"
             chat_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=augmented_prompt)]))
             
-            status_text.empty() # Remove loading text
+            status_text.empty()
             
-            # Call Streaming API
-            # THIS IS THE FIX: Using gemini-1.5-flash for the 1,500/day quota limit.
+            # WE KNOW THIS WORKS: Using the model your API key is authorized for
             response_stream = gemini_client.models.generate_content_stream(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=chat_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -132,13 +138,11 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
                 )
             )
             
-            # Helper generator to pipe stream directly into Streamlit UI component
             def chunk_generator():
                 for chunk in response_stream:
                     if chunk.text:
                         yield chunk.text
 
-            # Stream chunks smoothly onto the page
             full_response = st.write_stream(chunk_generator())
             st.session_state.messages.append({"role": "model", "content": full_response})
             
@@ -146,6 +150,6 @@ if user_prompt := st.chat_input("Ask about procedures, forms, or specific codes 
             status_text.empty()
             error_str = str(e)
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                st.warning("⚠️ *I am answering questions a bit too fast and hit a temporary speed limit. Please wait 10 seconds and try again.*")
+                st.error("🛑 **Daily Limit Reached:** Google's Free Tier limits gemini-2.5-flash to 20 requests per day. The limit resets at midnight.")
             else:
                 st.error(f"System Error: {e}")
